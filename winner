@@ -1,0 +1,85 @@
+import dash
+import dash_core_components as dcc
+import dash_html_components as html
+from dash.dependencies import Input, Output
+import plotly.express as px
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+import dash_bootstrap_components as dbc
+
+# Load and preprocess your dataset
+file_path = '/Users/venkat/Documents/ML model/cleaned_dataset.csv'
+data = pd.read_csv(file_path)
+
+# Example: Calculate statistics for each team
+team_stats = data.groupby('HomeTeam').agg({'FTHG': 'sum', 'FTAG': 'sum', 'FTR': 'count'}).reset_index()
+team_stats.rename(columns={'FTHG': 'GoalsScored', 'FTAG': 'GoalsConceded', 'FTR': 'MatchesPlayed'}, inplace=True)
+
+# Prepare data for match prediction
+features = data[['HomeTeam', 'AwayTeam', 'HTGS', 'ATGS', 'HTGC', 'ATGC']]
+features = pd.get_dummies(features, columns=['HomeTeam', 'AwayTeam'])
+target = data['FTR']
+
+# Split data and train a logistic regression model
+X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, random_state=42)
+model = LogisticRegression()
+model.fit(X_train, y_train)
+
+# Initialize Dash app with Bootstrap
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+
+# Define the layout of the app with enhanced styling
+app.layout = dbc.Container([
+    dbc.Row([
+        dbc.Col([
+            dcc.Dropdown(
+                id='team-dropdown',
+                options=[{'label': team, 'value': team} for team in team_stats['HomeTeam']],
+                value=team_stats['HomeTeam'][0]
+            ),
+            html.Div(id='team-stats-display', style={'margin-top': '20px'}),
+            dcc.Graph(id='team-stats-plot')
+        ], width=6),
+        dbc.Col([
+            dbc.Button('Predict Next Match', id='predict-button', color='primary', className='mr-2'),
+            html.Div(id='prediction-output', style={'margin-top': '20px'}),
+            dcc.Graph(id='prediction-plot')
+        ], width=6)
+    ], justify="center", align="center", className="h-50"),
+], fluid=True)
+
+# Callbacks for updating team statistics and match prediction
+@app.callback(
+    [Output('team-stats-display', 'children'),
+     Output('team-stats-plot', 'figure')],
+    [Input('team-dropdown', 'value')]
+)
+def update_team_stats(selected_team):
+    stats = team_stats[team_stats['HomeTeam'] == selected_team]
+    stats_display = html.Div([
+        html.H4(selected_team),
+        html.P(f"Goals Scored: {stats['GoalsScored'].iloc[0]}"),
+        html.P(f"Goals Conceded: {stats['GoalsConceded'].iloc[0]}"),
+        html.P(f"Matches Played: {stats['MatchesPlayed'].iloc[0]}")
+    ])
+    fig = px.bar(stats, x='HomeTeam', y='GoalsScored', title=f"Goals Scored by {selected_team}")
+    return stats_display, fig
+
+@app.callback(
+    [Output('prediction-plot', 'figure'),
+     Output('prediction-output', 'children')],
+    [Input('predict-button', 'n_clicks')],
+    prevent_initial_call=True
+)
+def update_output(n_clicks):
+    y_pred = model.predict(X_test)
+    fig = px.histogram(x=y_pred, labels={'x': 'Predicted Result'}, title='Match Outcome Predictions')
+    next_match_features = pd.DataFrame([{'HomeTeam': 'Team1', 'AwayTeam': 'Team2', 'HTGS': 10, 'ATGS': 8, 'HTGC': 5, 'ATGC': 6}])
+    next_match_features = pd.get_dummies(next_match_features).reindex(columns=features.columns, fill_value=0)
+    next_match_prediction = model.predict(next_match_features)
+    prediction_text = f"Predicted Result for the Next Match: {next_match_prediction[0]}"
+    return fig, prediction_text
+
+if __name__ == '__main__':
+    app.run_server(debug=True)
